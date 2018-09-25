@@ -90,6 +90,7 @@ static struct timeval stop_time;
 
 /* remember timestamp of first statement */
 static struct timeval first_stmt_time;
+static struct timeval last_stmt_time;
 
 /* maximum seconds behind schedule */
 static time_t secs_behind = 0;
@@ -180,59 +181,79 @@ static int do_sleep(struct timeval *delta) {
 #endif
 }
 
-static void print_replay_statistics() {
+static void print_replay_statistics(int dry_run) {
 	int hours, minutes;
 	double seconds, runtime, session_time, busy_time;
 	struct timeval delta;
 	unsigned long histtotal =
 		stat_hist[0] + stat_hist[1] + stat_hist[2] + stat_hist[3] + stat_hist[4];
 
-	fprintf(sf, "\nReplay statistics\n");
-	fprintf(sf, "=================\n\n");
+	if (dry_run) {
+		fprintf(sf, "\nReplay statistics (dry run)\n");
+		fprintf(sf, "===========================\n\n");
 
-	/* calculate total run time */
-	delta.tv_sec = stop_time.tv_sec;
-	delta.tv_usec = stop_time.tv_usec;
-	/* subtract statement start time */
-	timersub(&delta, &start_time, &delta);
-	runtime = delta.tv_usec / 1000000.0 + delta.tv_sec;
-	/* calculate hours and minutes, subtract from delta */
-	hours = delta.tv_sec / 3600;
-	delta.tv_sec -= hours * 3600;
-	minutes = delta.tv_sec / 60;
-	delta.tv_sec -= minutes * 60;
-	seconds = delta.tv_usec / 1000000.0 + delta.tv_sec;
-	/* calculate total busy time */
-	busy_time = stat_exec.tv_usec / 1000000.0 + stat_exec.tv_sec;
-	/* calculate total session time */
-	session_time = stat_session.tv_usec / 1000000.0 + stat_session.tv_sec;
+		/* calculate lengh of the recorded workload */
+		timersub(&last_stmt_time, &first_stmt_time, &delta);
+		hours = delta.tv_sec / 3600;
+		delta.tv_sec -= hours * 3600;
+		minutes = delta.tv_sec / 60;
+		delta.tv_sec -= minutes * 60;
+		seconds = delta.tv_usec / 1000000.0 + delta.tv_sec;
 
-	fprintf(sf, "Speed factor for replay: %.3f\n", replay_factor);
-	fprintf(sf, "Total run time:");
-	if (hours > 0) {
-		fprintf(sf, " %d hours", hours);
-	}
-	if (minutes > 0) {
-		fprintf(sf, " %d minutes", minutes);
-	}
-	fprintf(sf, " %.3f seconds\n", seconds);
-	fprintf(sf, "Maximum lag behind schedule: %lu seconds\n", (unsigned long) secs_behind);
-	fprintf(sf, "Calls to the server: %lu\n", stat_actions);
-	if (runtime > 0.0) {
-		fprintf(sf, "(%.3f calls per second)\n", stat_actions / runtime);
+		fprintf(sf, "Duration of recorded workload:");
+		if (hours > 0) {
+			fprintf(sf, " %d hours", hours);
+		}
+		if (minutes > 0) {
+			fprintf(sf, " %d minutes", minutes);
+		}
+		fprintf(sf, " %.3f seconds\n", seconds);
+		fprintf(sf, "Calls to the server: %lu\n", stat_actions);
+	} else {
+		fprintf(sf, "\nReplay statistics\n");
+		fprintf(sf, "=================\n\n");
+
+		/* calculate total run time */
+		timersub(&stop_time, &start_time, &delta);
+		runtime = delta.tv_usec / 1000000.0 + delta.tv_sec;
+		/* calculate hours and minutes, subtract from delta */
+		hours = delta.tv_sec / 3600;
+		delta.tv_sec -= hours * 3600;
+		minutes = delta.tv_sec / 60;
+		delta.tv_sec -= minutes * 60;
+		seconds = delta.tv_usec / 1000000.0 + delta.tv_sec;
+		/* calculate total busy time */
+		busy_time = stat_exec.tv_usec / 1000000.0 + stat_exec.tv_sec;
+		/* calculate total session time */
+		session_time = stat_session.tv_usec / 1000000.0 + stat_session.tv_sec;
+
+		fprintf(sf, "Speed factor for replay: %.3f\n", replay_factor);
+		fprintf(sf, "Total run time:");
+		if (hours > 0) {
+			fprintf(sf, " %d hours", hours);
+		}
+		if (minutes > 0) {
+			fprintf(sf, " %d minutes", minutes);
+		}
+		fprintf(sf, " %.3f seconds\n", seconds);
+		fprintf(sf, "Maximum lag behind schedule: %lu seconds\n", (unsigned long) secs_behind);
+		fprintf(sf, "Calls to the server: %lu\n", stat_actions);
+		if (runtime > 0.0) {
+			fprintf(sf, "(%.3f calls per second)\n", stat_actions / runtime);
+		}
 	}
 
 	fprintf(sf, "Total number of connections: %lu\n", stat_sesscnt);
 	fprintf(sf, "Maximum number of concurrent connections: %lu\n", stat_sessmax);
-	if (runtime > 0.0) {
+	if (!dry_run && runtime > 0.0) {
 		fprintf(sf, "Average number of concurrent connections: %.3f\n", session_time / runtime);
 	}
-	if (session_time > 0.0) {
+	if (!dry_run && session_time > 0.0) {
 		fprintf(sf, "Average session idle percentage: %.3f%%\n", 100.0 * (session_time - busy_time) / session_time);
 	}
 
 	fprintf(sf, "SQL statements executed: %lu\n", stat_stmt - stat_prep);
-	if (stat_stmt > stat_prep) {
+	if (!dry_run && stat_stmt > stat_prep) {
 		fprintf(sf, "(%lu or %.3f%% of these completed with error)\n",
 			stat_errors, (100.0 * stat_errors) / (stat_stmt - stat_prep));
 		fprintf(sf, "Maximum number of concurrent SQL statements: %lu\n", stat_stmtmax);
@@ -250,7 +271,7 @@ static void print_replay_statistics() {
 		fprintf(sf, "     over 2    seconds: %.3f%%\n", 100.0 * stat_hist[4] / histtotal);
 	}
 }
-	
+
 int database_consumer_init(const char *ignore, const char *host, int port, const char *passwd, double factor) {
 	int conn_string_len = 12;  /* port and '\0' */
 	const char *p;
@@ -362,7 +383,7 @@ int database_consumer_init(const char *ignore, const char *host, int port, const
 	return 1;
 }
 
-void database_consumer_finish() {
+void database_consumer_finish(int dry_run) {
 	debug(3, "Entering database_consumer_finish%s\n", "");
 
 	free(conn_string);
@@ -374,7 +395,7 @@ void database_consumer_finish() {
 	if (-1 == gettimeofday(&stop_time, NULL)) {
 		perror("Error calling gettimeofday");
 	} else if (sf) {
-		print_replay_statistics();
+		print_replay_statistics(dry_run);
 	}
 
 	debug(3, "Leaving database_consumer_finish%s\n", "");
@@ -634,6 +655,8 @@ int database_consumer(replay_item *item) {
 
 	/* time when the statement originally ran */
 	stmt_time = replay_get_time(item);
+	last_stmt_time.tv_sec = stmt_time->tv_sec;
+	last_stmt_time.tv_usec = stmt_time->tv_usec;
 
 	/* set first_stmt_time if it is not yet set */
 	if (! fstmtm_set) {
@@ -840,9 +863,9 @@ int database_consumer(replay_item *item) {
 					debug(2, "Removing closed session 0x" UINT64_FORMAT "\n", replay_get_session_id(item));
 				} else {
 					debug(2, "Disconnecting database connection for session 0x" UINT64_FORMAT "\n", replay_get_session_id(item));
-	
+
 					PQfinish(found_conn->db_conn);
-	
+
 					/* remember session duration for statistics */
 					if (-1 == gettimeofday(&delta, NULL)) {
 						perror("Error calling gettimeofday");
@@ -850,11 +873,11 @@ int database_consumer(replay_item *item) {
 					} else {
 						/* subtract session start time */
 						timersub(&delta, &(found_conn->session_start), &delta);
-	
+
 						/* add to total */
 						timeradd(&stat_session, &delta, &stat_session);
 					}
-	
+
 					/* one less concurrent session */
 					--stat_sessions;
 				}
@@ -966,4 +989,53 @@ int database_consumer(replay_item *item) {
 
 	debug(3, "Leaving database_consumer%s\n", "");
 	return rc;
+}
+
+int database_consumer_dry_run(replay_item *item) {
+	const replay_type type = replay_get_type(item);
+	debug(3, "Entering database_consumer_dry_run%s\n", "");
+	const struct timeval *stmt_time;
+	static int fstmt_set_dr = 0;
+
+	/* time when the statement originally ran */
+	stmt_time = replay_get_time(item);
+	last_stmt_time.tv_sec = stmt_time->tv_sec;
+	last_stmt_time.tv_usec = stmt_time->tv_usec;
+
+	/* set first_stmt_time if it is not yet set */
+	if (! fstmt_set_dr) {
+		first_stmt_time.tv_sec = stmt_time->tv_sec;
+		first_stmt_time.tv_usec = stmt_time->tv_usec;
+
+		fstmt_set_dr = 1;
+	}
+
+	/* gather statistics */
+	++stat_actions;
+
+	switch (type) {
+		case pg_connect:
+			++stat_sesscnt;
+			if (++stat_sessions > stat_sessmax) {
+				stat_sessmax = stat_sessions;
+			}
+			break;
+		case pg_disconnect:
+			--stat_sessions;
+			break;
+		case pg_execute:
+		case pg_exec_prepared:
+			++stat_stmt;
+			break;
+		case pg_prepare:
+			++stat_prep;
+			break;
+		case pg_cancel:
+			break;
+	}
+
+	replay_free(item);
+	debug(3, "Leaving database_consumer_dry_run%s\n", "");
+
+	return 1;
 }

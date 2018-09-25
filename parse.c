@@ -80,6 +80,8 @@ static unsigned long lineno = 0;
 /* offset for time values (what mktime(3) makes of 2000-01-01 00:00:00)
    used to make timestamps independent of local time and broken mktime */
 static time_t epoch;
+/* time of the first and last statement that we parse */
+static struct timeval first_stmt_time, last_stmt_time;
 
 /* statistics */
 static unsigned long stat_simple = 0;     /* simple statements */
@@ -1217,6 +1219,10 @@ static int parse_bind_args(char *** const result, char *line) {
 }
 
 static void print_parse_statistics() {
+	int hours, minutes;
+	double seconds;
+	struct timeval delta;
+
 	fprintf(sf, "\nParse statistics\n");
 	fprintf(sf, "================\n\n");
 	fprintf(sf, "Log lines read: %lu\n", lineno);
@@ -1233,6 +1239,23 @@ static void print_parse_statistics() {
 	}
 	fprintf(sf, "Cancel requests processed: %lu\n", stat_cancel);
 	fprintf(sf, "Fast-path function calls ignored: %lu\n", stat_fastpath);
+
+	/* calculate lengh of the recorded workload */
+	timersub(&last_stmt_time, &first_stmt_time, &delta);
+	hours = delta.tv_sec / 3600;
+	delta.tv_sec -= hours * 3600;
+	minutes = delta.tv_sec / 60;
+	delta.tv_sec -= minutes * 60;
+	seconds = delta.tv_usec / 1000000.0 + delta.tv_sec;
+
+	fprintf(sf, "Duration of recorded workload:");
+	if (hours > 0) {
+		fprintf(sf, " %d hours", hours);
+	}
+	if (minutes > 0) {
+		fprintf(sf, " %d minutes", minutes);
+	}
+	fprintf(sf, " %.3f seconds\n", seconds);
 }
 
 int parse_provider_init(const char *in, int parse_csv, const char *begin, const char *end, const char *db_only, const char *usr_only) {
@@ -1306,6 +1329,7 @@ replay_item * parse_provider() {
 	struct connection *conn = NULL;
 	/* queue of up to two replay items */
 	static replay_item *queue[2] = { NULL, NULL };
+	static int first_stmt_time_set = 0;
 
 	debug(3, "Entering parse_provider%s\n", "");
 
@@ -1575,6 +1599,15 @@ replay_item * parse_provider() {
 		/* remember time */
 		oldtime.tv_sec  = replay_get_time(r)->tv_sec;
 		oldtime.tv_usec = replay_get_time(r)->tv_usec;
+
+		last_stmt_time.tv_sec = replay_get_time(r)->tv_sec;
+		last_stmt_time.tv_usec = replay_get_time(r)->tv_usec;
+		if (! first_stmt_time_set) {
+			first_stmt_time.tv_sec = replay_get_time(r)->tv_sec;
+			first_stmt_time.tv_usec = replay_get_time(r)->tv_usec;
+
+			first_stmt_time_set = 1;
+		}
 	}
 
 	if (-1 == status) {

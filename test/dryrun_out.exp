@@ -1,0 +1,9 @@
+
+Replay statistics (dry run)
+===========================
+
+Duration of recorded workload: 37.764 seconds
+Calls to the server: 37
+Total number of connections: 4
+Maximum number of concurrent connections: 4
+SQL statements executed: 18
