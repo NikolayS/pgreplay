@@ -344,3 +344,10 @@ TODO list
 =========
 
 Nothing currently.  Tell me if you have good ideas.
+
+Compilation
+=========
+```
+sudo apt-get install libpq-dev
+./configure  CFLAGS="-I/usr/include/postgresql/"
+```
